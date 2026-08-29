@@ -1,4 +1,4 @@
-name: Split Kanzul Ummal Safe
+name: Split Kanzul Ummal Safe BN
 
 on:
   push:
@@ -15,86 +15,93 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Split into 1-5000 chunk files
+      - name: Split with Bangla Numbers
         run: |
           python3 << 'PY'
           import json
           from pathlib import Path
-          import os
+          import os, re
 
           INPUT = Path("data/কানযুল উম্মাল.json")
           OUTPUT_DIR = Path("books/kanzulUmmal")
 
+          # ইংরেজি -> বাংলা সংখ্যা
+          en_bn = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
+          def to_bn(n):
+              return str(n).translate(en_bn)
+
+          def extract_number(title, fallback):
+              # "কানযুল উম্মাল ১" থেকে ১ বের করবে, না পেলে fallback
+              m = re.search(r'(\d+)', title)
+              if m:
+                  return int(m.group(1))
+              return fallback
+
           with open(INPUT, 'r', encoding='utf-8') as f:
               data = json.load(f)
 
-          print(f"Total hadith: {len(data)}")
+          print(f"Total: {len(data)}")
 
-          # Config
-          INNER_CHUNK = 100 # 1 object = 100 hadith
-          OUTER_CHUNK = 5000 # 1 file = 5000 hadith
-
+          INNER_CHUNK = 100
+          OUTER_CHUNK = 5000
           OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-          # পুরানো ফাইল ক্লিন
-          for old_file in OUTPUT_DIR.glob("*.json"):
-              old_file.unlink()
+          # clean old
+          for p in OUTPUT_DIR.glob("*.json"):
+              p.unlink()
           if Path("books/kanzulUmmal.json").exists():
               Path("books/kanzulUmmal.json").unlink()
 
-          file_list = []
           inner_chunks = []
 
-          # প্রথমে 100 করে inner chunk বানাও
           for i in range(0, len(data), INNER_CHUNK):
               chunk = data[i:i+INNER_CHUNK]
               start = i + 1
               end = i + len(chunk)
 
-              combined = []
-              for item in chunk:
-                  t = item.get("title","").strip()
-                  h = item.get("hadith","").strip()
-                  combined.append(f"{h}\n-{t}")
+              combined_blocks = []
+              for idx, item in enumerate(chunk):
+                  real_num = extract_number(item.get("title",""), start + idx)
+                  bn_num = to_bn(real_num)
+                  hadith = item.get("hadith","").strip()
+
+                  # নতুন ফরম্যাট: কানযুল উম্মাল হাদিস নং: ১
+                  block = f"কানযুল উম্মাল হাদিস নং: {bn_num}\n{hadith}"
+                  combined_blocks.append(block)
+
+              # Title এখন বাংলা সংখ্যায়
+              chunk_title = f"কানযুল উম্মাল হাদিস {to_bn(start)} থেকে {to_bn(end)}"
 
               inner_chunks.append({
-                  "1": f"কানযুল উম্মাল হাদিস {start} থেকে {end}",
-                  "2": "\n\n".join(combined)
+                  "1": chunk_title,
+                  "2": "\n\n".join(combined_blocks)
               })
 
-          # এবার 5000 করে ফাইলে ভাগ করো (মানে 50 টা inner chunk = 1 file)
-          chunks_per_file = OUTER_CHUNK // INNER_CHUNK # 50
+          # 5000 করে ফাইল
+          per_file = OUTER_CHUNK // INNER_CHUNK
+          file_list = []
 
-          for file_idx in range(0, len(inner_chunks), chunks_per_file):
-              file_slice = inner_chunks[file_idx:file_idx+chunks_per_file]
+          for fi in range(0, len(inner_chunks), per_file):
+              slice_data = inner_chunks[fi:fi+per_file]
+              s = fi * INNER_CHUNK + 1
+              e = s + len(slice_data) * INNER_CHUNK - 1
+              if e > len(data):
+                  e = len(data)
 
-              # এই ফাইলের রেঞ্জ বের করো
-              first_range = file_slice[0]["1"] # কানযুল উম্মাল হাদিস 1 থেকে 100
-              # start end number বের করা
-              overall_start = file_idx * INNER_CHUNK + 1
-              overall_end = overall_start + (len(file_slice) * INNER_CHUNK) -1
-              if overall_end > len(data):
-                  overall_end = len(data)
+              fname = f"kanzulUmmal-{s}-{e}.json"
+              fpath = OUTPUT_DIR / fname
 
-              filename = f"kanzulUmmal-{overall_start}-{overall_end}.json"
-              filepath = OUTPUT_DIR / filename
+              with open(fpath, 'w', encoding='utf-8') as out:
+                  json.dump(slice_data, out, ensure_ascii=False, separators=(',', ':'))
 
-              # সাইজ কমানোর জন্য indent=None এবং ensure_ascii=False
-              with open(filepath, 'w', encoding='utf-8') as out:
-                  json.dump(file_slice, out, ensure_ascii=False, separators=(',', ':'))
+              file_list.append(fname)
+              print(f"Created {fname} - {os.path.getsize(fpath)/1024/1024:.2f} MB")
 
-              file_list.append(filename)
-              size_mb = os.path.getsize(filepath) / (1024*1024)
-              print(f"Created {filename} -> {size_mb:.2f} MB")
-
-          # একটা index.json বানিয়ে দিলাম যাতে app এ লিস্ট করা সহজ হয়
           with open(OUTPUT_DIR / "index.json", 'w', encoding='utf-8') as idx:
               json.dump(file_list, idx, ensure_ascii=False, indent=2)
-
-          print("All Done!")
           PY
 
-      - name: Commit splitted books
+      - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -102,6 +109,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes"
           else
-            git commit -m "build: split kanzul into 5000 safe chunks"
+            git commit -m "build: kanzul with Bangla numbers and fixed format"
             git push
           fi
