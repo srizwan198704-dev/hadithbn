@@ -1,0 +1,69 @@
+name: Convert Kanzul Ummal
+
+on:
+  push:
+    paths:
+      - 'data/কানযুল উম্মাল.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Convert JSON to 100 chunk (Single File)
+        run: |
+          python3 << 'PY'
+          import json
+          from pathlib import Path
+
+          INPUT = Path("data/কানযুল উম্মাল.json")
+          OUTPUT = Path("books/kanzulUmmal.json")
+
+          with open(INPUT, 'r', encoding='utf-8') as f:
+              data = json.load(f)
+
+          chunk_size = 100
+          final = []
+
+          for i in range(0, len(data), chunk_size):
+              chunk = data[i:i+chunk_size]
+              start = i + 1
+              end = i + len(chunk)
+
+              # 100 টা হাদিস একসাথে একটা string এ
+              combined = []
+              for item in chunk:
+                  title = item.get("title","").strip()
+                  hadith = item.get("hadith","").strip()
+                  combined.append(f"{hadith}\n-{title}")
+
+              big_string = "\n\n".join(combined)
+
+              final.append({
+                  "1": f"কানযুল উম্মাল হাদিস {start} থেকে {end}",
+                  "2": big_string
+              })
+
+          OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+          with open(OUTPUT, 'w', encoding='utf-8') as out:
+              json.dump(final, out, ensure_ascii=False, indent=2)
+
+          print(f"Done: {OUTPUT} | Total chunks: {len(final)}")
+          PY
+
+      - name: Commit output
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add books/kanzulUmmal.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "build: kanzulUmmal 1-100 chunked"
+            git push
+          fi
