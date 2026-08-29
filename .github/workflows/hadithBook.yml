@@ -3,7 +3,7 @@ name: Convert Kanzul Ummal
 on:
   push:
     paths:
-      - 'data/সহিহ ইবনু খুযাইমা.json'
+      - 'data/সহীহ ইবনু খুযাইমাহ.json'
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
           from pathlib import Path
           import re, os
 
-          INPUT = Path("data/সহিহ ইবনু খুযাইমা.json")
+          INPUT = Path("data/সহীহ ইবনু খুযাইমাহ.json")
           OUTPUT_DIR = Path("books/khuzaima")
 
           # BN Converter
@@ -49,12 +49,12 @@ jobs:
                   real_num = start + idx
                   bn_num = to_bn(real_num)
                   # FIXED FORMAT
-                  combined.append(f"সহিহ ইবনু খুযাইমা হাদিস নং: {bn_num}\n{hadith}")
+                  combined.append(f"সহীহ ইবনু খুযাইমা হাদিস নং: {bn_num}\n{hadith}")
 
               big_string = "\n\n".join(combined)
 
               inner_chunks.append({
-                  "1": f"সহিহ ইবনু খুযাইমা হাদিস {to_bn(start)} থেকে {to_bn(end)}",
+                  "1": f"সহীহ ইবনু খুযাইমা হাদিস {to_bn(start)} থেকে {to_bn(end)}",
                   "2": big_string
               })
 
