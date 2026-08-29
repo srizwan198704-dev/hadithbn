@@ -23,9 +23,9 @@ jobs:
           import requests, re, html, os, json, time
           from bs4 import BeautifulSoup
 
-          BOOK_ID = "101"
+          BOOK_ID = "10"
           BASE_URL = f"https://hadithbn.com/h/{BOOK_ID}"
-          BOOK_NAME_BN = "কানযুল উম্মাল"
+          BOOK_NAME_BN = "সহীহ ইবনু খুযাইমাহ"
           HEADERS = {"User-Agent": "Mozilla/5.0"}
 
           def to_bn(n):
