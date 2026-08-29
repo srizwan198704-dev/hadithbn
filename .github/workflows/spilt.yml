@@ -8,19 +8,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    
+    env:
+      OUT_DIR: KanzulUmmal
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Split 1.json 2.json
+      - name: Split Kanzul Ummal
         run: |
           cat > split.py << 'PYEOF'
           import json, os, re
 
           INPUT_FILE = "data/কানযুল উম্মাল.json"
-          OUTPUT_DIR = "kanzulUmmal"
+          OUTPUT_DIR = os.getenv("OUT_DIR", "KanzulUmmal")
           CHUNK_SIZE = 100
           BOOK_ID = 1051
           BOOK_TITLE = "কানযুল উম্মাল"
@@ -74,11 +79,13 @@ jobs:
               chunk_id += 1
           PYEOF
           python split.py
+          echo "Checking $OUT_DIR"
+          ls -lh $OUT_DIR/
 
-      - name: Commit
+      - name: Commit and Push
         run: |
           git config --global user.name "bot"
           git config --global user.email "bot@github.com"
-          git add data/chunks/
-          git diff --staged --quiet || git commit -m "title = হাদিস নং format"
+          git add $OUT_DIR/
+          git diff --staged --quiet || git commit -m "Split Kanzul Ummal: হাদিস নং format - $(ls $OUT_DIR | wc -l) chunks"
           git push
