@@ -139,7 +139,7 @@ jobs:
               data = json.load(f)
 
           chunk_size = 100
-          outer_size = 5000
+          outer_size = 10000
           inner_chunks = []
 
           for i in range(0, len(data), chunk_size):
