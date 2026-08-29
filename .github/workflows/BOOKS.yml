@@ -1,0 +1,209 @@
+name: Convert Kanzul Ummal
+
+on:
+  push:
+    paths:
+      - 'data/*.json'
+      - 'data/**/*.json'
+  workflow_dispatch:
+    inputs:
+      json_file:
+        description: 'data ফোল্ডারের JSON ফাইল (যেমন: সহীহ ইবনু খুযাইমাহ.json)'
+        required: true
+        type: string
+      book_name:
+        description: 'কিতাবের নাম - এটাই হাদিসের ভিতরে বসবে (যেমন: সহীহ ইবনু খুযাইমা)'
+        required: true
+        type: string
+      output_dir:
+        description: 'books এর ভিতরে ফোল্ডার (ইংরেজিতে, যেমন: khuzaima) - খালি রাখলে JSON নাম থেকে auto'
+        required: false
+        type: string
+      file_prefix:
+        description: 'আউটপুট ফাইলের prefix (যেমন: kanzulUmmal) - খালি রাখলে output_dir থেকেই নিবে'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Convert JSON to 100 chunk with BN (Dynamic)
+        env:
+          INPUT_JSON_FILE: ${{ inputs.json_file }}
+          INPUT_BOOK_NAME: ${{ inputs.book_name }}
+          INPUT_OUTPUT_DIR: ${{ inputs.output_dir }}
+          INPUT_FILE_PREFIX: ${{ inputs.file_prefix }}
+        run: |
+          python3 << 'PY'
+          import json
+          from pathlib import Path
+          import re, os, subprocess, sys
+
+          # --- Input resolve ---
+          json_file_input = os.environ.get("INPUT_JSON_FILE", "").strip()
+          book_name_input = os.environ.get("INPUT_BOOK_NAME", "").strip()
+          output_dir_input = os.environ.get("INPUT_OUTPUT_DIR", "").strip()
+          file_prefix_input = os.environ.get("INPUT_FILE_PREFIX", "").strip()
+
+          data_dir = Path("data")
+
+          target_json_path = None
+
+          if json_file_input:
+              # dispatch mode
+              p = Path(json_file_input)
+              # যদি শুধু নাম দেয়, data/ যোগ করো
+              if not p.is_absolute() and str(p.parent) == ".":
+                  target_json_path = data_dir / p
+              else:
+                  # যদি data/সহ দেয়
+                  if p.parts and p.parts[0] == "data":
+                      target_json_path = p
+                  else:
+                      target_json_path = data_dir / p.name if p.parent == Path(".") else p
+              # fallback: data/filename direct
+              if not target_json_path.exists():
+                  alt = data_dir / Path(json_file_input).name
+                  if alt.exists():
+                      target_json_path = alt
+          else:
+              # push mode - changed file detect
+              try:
+                  diff = subprocess.check_output(["git", "diff", "--name-only", "HEAD~1", "HEAD"], text=True)
+                  files = [line.strip() for line in diff.splitlines() if line.strip().startswith("data/") and line.strip().endswith(".json")]
+                  if files:
+                      target_json_path = Path(files[0])
+                      print(f"Auto detected from push: {target_json_path}")
+              except Exception as e:
+                  print(f"git diff failed: {e}")
+
+          if not target_json_path or not target_json_path.exists():
+              # last fallback: data folder এ latest json
+              all_jsons = sorted(data_dir.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)
+              if not all_jsons:
+                  all_jsons = sorted(data_dir.rglob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)
+              if all_jsons:
+                  target_json_path = all_jsons[0]
+                  print(f"Fallback to latest: {target_json_path}")
+              else:
+                  print("ERROR: কোন JSON ফাইল পাওয়া যায়নি data ফোল্ডারে")
+                  sys.exit(1)
+
+          print(f"Processing file: {target_json_path}")
+
+          # Book name
+          BOOK_NAME = book_name_input if book_name_input else "সহীহ ইবনু খুযাইমা"
+          # Default for old behavior
+          if not book_name_input:
+              print(f"book_name input খালি, default ব্যবহার হচ্ছে: {BOOK_NAME}")
+
+          # Output dir & file prefix logic - Directory filename অনুযায়ী
+          stem = target_json_path.stem # extension ছাড়া নাম
+
+          def slugify(s):
+              s = s.lower()
+              s = re.sub(r'\s+', '-', s)
+              s = re.sub(r'[^a-z0-9\-_]', '', s)
+              s = re.sub(r'-+', '-', s).strip('-')
+              return s
+
+          auto_slug = slugify(stem)
+          if not auto_slug: # পুরো বাংলা নাম হলে slug খালি হবে
+              auto_slug = slugify(file_prefix_input) if file_prefix_input else "book"
+
+          OUTPUT_DIR_NAME = output_dir_input if output_dir_input else auto_slug
+          FILE_PREFIX = file_prefix_input if file_prefix_input else OUTPUT_DIR_NAME
+
+          # Clean prefix for CDN safe (english only)
+          FILE_PREFIX = slugify(FILE_PREFIX) or "kanzulUmmal"
+          OUTPUT_DIR = Path(f"books/{OUTPUT_DIR_NAME}")
+
+          print(f"BOOK_NAME: {BOOK_NAME}")
+          print(f"OUTPUT_DIR: {OUTPUT_DIR}")
+          print(f"FILE_PREFIX: {FILE_PREFIX}")
+
+          # BN Converter
+          en_bn = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
+          def to_bn(n):
+              return str(n).translate(en_bn)
+
+          with open(target_json_path, 'r', encoding='utf-8') as f:
+              data = json.load(f)
+
+          chunk_size = 100
+          outer_size = 5000
+          inner_chunks = []
+
+          for i in range(0, len(data), chunk_size):
+              chunk = data[i:i+chunk_size]
+              start = i + 1
+              end = i + len(chunk)
+
+              combined = []
+              for idx, item in enumerate(chunk):
+                  hadith = item.get("hadith","").strip()
+                  real_num = start + idx
+                  bn_num = to_bn(real_num)
+                  # FIXED FORMAT - BOOK_NAME dispatch থেকে আসবে
+                  combined.append(f"{BOOK_NAME} হাদিস নং: {bn_num}\n{hadith}")
+
+              big_string = "\n\n".join(combined)
+
+              inner_chunks.append({
+                  "1": f"{BOOK_NAME} হাদিস {to_bn(start)} থেকে {to_bn(end)}",
+                  "2": big_string
+              })
+
+          # OUTPUT DIR FIXED - SPLIT BOOK
+          OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+          # পুরানো single ফাইল থাকলে ডিলিট (এখন dynamic folder এর জন্য না, শুধু root legacy)
+          if Path("books/kanzulUmmal.json").exists():
+              Path("books/kanzulUmmal.json").unlink()
+          for old in OUTPUT_DIR.glob("*.json"):
+              old.unlink()
+
+          per_file = outer_size // chunk_size # 50
+
+          generated_files = []
+          for fi in range(0, len(inner_chunks), per_file):
+              slice_data = inner_chunks[fi:fi+per_file]
+              s = fi * chunk_size + 1
+              e = s + len(slice_data) * chunk_size - 1
+              if e > len(data):
+                  e = len(data)
+
+              fname = f"{FILE_PREFIX}-{s}-{e}.json"
+              fpath = OUTPUT_DIR / fname
+
+              with open(fpath, 'w', encoding='utf-8') as out:
+                  json.dump(slice_data, out, ensure_ascii=False, separators=(',', ':'))
+
+              generated_files.append(fname)
+              print(f"Created {fpath} - {os.path.getsize(fpath)/1024/1024:.2f} MB")
+
+          # index
+          with open(OUTPUT_DIR / "index.json", 'w', encoding='utf-8') as idx:
+              json.dump(generated_files, idx, ensure_ascii=False, indent=2)
+
+          print(f"Done | Total chunks: {len(inner_chunks)} | Source: {target_json_path.name} | Book: {BOOK_NAME}")
+          PY
+
+      - name: Commit output
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add books/
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "build: ${{ inputs.book_name || 'auto' }} bn fixed + split 5000 from ${{ inputs.json_file || 'push' }}"
+            git push
+          fi
