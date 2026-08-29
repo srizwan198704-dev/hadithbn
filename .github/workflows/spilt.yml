@@ -20,7 +20,7 @@ jobs:
           import json, os, re
 
           INPUT_FILE = "data/কানযুল উম্মাল.json"
-          OUTPUT_DIR = "data/chunks"
+          OUTPUT_DIR = "data/kanzulUmmal"
           CHUNK_SIZE = 100
           BOOK_ID = 1051
           BOOK_TITLE = "কানযুল উম্মাল"
