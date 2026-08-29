@@ -1,0 +1,84 @@
+name: Split Kanzul Ummal JSON
+
+on:
+  workflow_dispatch:
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Split 1.json 2.json
+        run: |
+          cat > split.py << 'PYEOF'
+          import json, os, re
+
+          INPUT_FILE = "data/কানযুল উম্মাল.json"
+          OUTPUT_DIR = "data/chunks"
+          CHUNK_SIZE = 100
+          BOOK_ID = 1051
+          BOOK_TITLE = "কানযুল উম্মাল"
+
+          def bn_to_en(s):
+              table = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+              d = re.findall(r'[০-৯0-9]+', s)
+              return int(d[-1].translate(table)) if d else 0
+
+          def en_to_bn(n):
+              return str(n).translate(str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯"))
+
+          with open(INPUT_FILE, "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          data = sorted(data, key=lambda x: bn_to_en(x.get("title","")))
+          os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+          chunk_id = 1
+          for i in range(0, len(data), CHUNK_SIZE):
+              chunk = data[i:i+CHUNK_SIZE]
+              new_chunk = []
+              for item in chunk:
+                  num_en = bn_to_en(item.get("title",""))
+                  num_bn = en_to_bn(num_en)
+                  full = item.get("hadith","")
+
+                  if "\n\n" in full:
+                      ar, bn_desc = full.split("\n\n", 1)
+                  else:
+                      ar, bn_desc = full, ""
+
+                  new_chunk.append({
+                      "chapter_id": chunk_id,
+                      "title": f"{BOOK_TITLE} হাদিস নং {num_bn}",
+                      "hadith_number": num_en,
+                      "book_id": BOOK_ID,
+                      "description": bn_desc.strip(),
+                      "description_ar": ar.strip(),
+                      "book": {
+                          "id": BOOK_ID,
+                          "title": BOOK_TITLE,
+                          "title_en": BOOK_TITLE
+                      }
+                  })
+              
+              out_path = os.path.join(OUTPUT_DIR, f"{chunk_id}.json")
+              with open(out_path, "w", encoding="utf-8") as out:
+                  json.dump(new_chunk, out, ensure_ascii=False, indent=2)
+              print(f"Created {out_path}")
+              chunk_id += 1
+          PYEOF
+          python split.py
+
+      - name: Commit
+        run: |
+          git config --global user.name "bot"
+          git config --global user.email "bot@github.com"
+          git add data/chunks/
+          git diff --staged --quiet || git commit -m "title = হাদিস নং format"
+          git push
