@@ -3,7 +3,7 @@ name: Convert Kanzul Ummal
 on:
   push:
     paths:
-      - 'data/কানযুল উম্মাল.json'
+      - 'data/সহিহ ইবনু খুযাইমা.json'
   workflow_dispatch:
 
 permissions:
@@ -15,55 +15,90 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Convert JSON to 100 chunk (Single File)
+      - name: Convert JSON to 100 chunk with BN
         run: |
           python3 << 'PY'
           import json
           from pathlib import Path
+          import re, os
 
-          INPUT = Path("data/কানযুল উম্মাল.json")
-          OUTPUT = Path("books/kanzulUmmal.json")
+          INPUT = Path("data/সহিহ ইবনু খুযাইমা.json")
+          OUTPUT_DIR = Path("books/khuzaima")
+
+          # BN Converter
+          en_bn = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
+          def to_bn(n):
+              return str(n).translate(en_bn)
 
           with open(INPUT, 'r', encoding='utf-8') as f:
               data = json.load(f)
 
           chunk_size = 100
-          final = []
+          outer_size = 5000
+          inner_chunks = []
 
           for i in range(0, len(data), chunk_size):
               chunk = data[i:i+chunk_size]
               start = i + 1
               end = i + len(chunk)
 
-              # 100 টা হাদিস একসাথে একটা string এ
               combined = []
-              for item in chunk:
-                  title = item.get("title","").strip()
+              for idx, item in enumerate(chunk):
                   hadith = item.get("hadith","").strip()
-                  combined.append(f"{hadith}\n-{title}")
+                  # আসল নম্বর
+                  real_num = start + idx
+                  bn_num = to_bn(real_num)
+                  # FIXED FORMAT
+                  combined.append(f"সহিহ ইবনু খুযাইমা হাদিস নং: {bn_num}\n{hadith}")
 
               big_string = "\n\n".join(combined)
 
-              final.append({
-                  "1": f"কানযুল উম্মাল হাদিস {start} থেকে {end}",
+              inner_chunks.append({
+                  "1": f"সহিহ ইবনু খুযাইমা হাদিস {to_bn(start)} থেকে {to_bn(end)}",
                   "2": big_string
               })
 
-          OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-          with open(OUTPUT, 'w', encoding='utf-8') as out:
-              json.dump(final, out, ensure_ascii=False, indent=2)
+          # OUTPUT DIR FIXED - SPLIT BOOK
+          OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+          # পুরানো single ফাইল থাকলে ডিলিট
+          if Path("books/kanzulUmmal.json").exists():
+              Path("books/kanzulUmmal.json").unlink()
+          for old in OUTPUT_DIR.glob("*.json"):
+              old.unlink()
 
-          print(f"Done: {OUTPUT} | Total chunks: {len(final)}")
+          per_file = outer_size // chunk_size # 50
+
+          for fi in range(0, len(inner_chunks), per_file):
+              slice_data = inner_chunks[fi:fi+per_file]
+              s = fi * chunk_size + 1
+              e = s + len(slice_data) * chunk_size - 1
+              if e > len(data):
+                  e = len(data)
+
+              # ফাইল নাম ইংরেজিতেই থাকবে যাতে CDN এ সমস্যা না হয়
+              fname = f"kanzulUmmal-{s}-{e}.json"
+              fpath = OUTPUT_DIR / fname
+
+              with open(fpath, 'w', encoding='utf-8') as out:
+                  json.dump(slice_data, out, ensure_ascii=False, separators=(',', ':'))
+
+              print(f"Created {fname} - {os.path.getsize(fpath)/1024/1024:.2f} MB")
+
+          # index
+          with open(OUTPUT_DIR / "index.json", 'w', encoding='utf-8') as idx:
+              json.dump([f"kanzulUmmal-{fi*chunk_size+1}-{min((fi+per_file)*chunk_size, len(data))}.json" for fi in range(0, len(inner_chunks), per_file)], idx, ensure_ascii=False, indent=2)
+
+          print(f"Done | Total chunks: {len(inner_chunks)}")
           PY
 
       - name: Commit output
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add books/kanzulUmmal.json
+          git add books/
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "build: kanzulUmmal 1-100 chunked"
+            git commit -m "build: kanzulUmmal bn fixed + split 5000"
             git push
           fi
