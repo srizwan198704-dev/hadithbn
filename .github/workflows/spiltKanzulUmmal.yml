@@ -1,0 +1,107 @@
+name: Split Kanzul Ummal Safe
+
+on:
+  push:
+    paths:
+      - 'data/কানযুল উম্মাল.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Split into 1-5000 chunk files
+        run: |
+          python3 << 'PY'
+          import json
+          from pathlib import Path
+          import os
+
+          INPUT = Path("data/কানযুল উম্মাল.json")
+          OUTPUT_DIR = Path("books/kanzulUmmal")
+
+          with open(INPUT, 'r', encoding='utf-8') as f:
+              data = json.load(f)
+
+          print(f"Total hadith: {len(data)}")
+
+          # Config
+          INNER_CHUNK = 100 # 1 object = 100 hadith
+          OUTER_CHUNK = 5000 # 1 file = 5000 hadith
+
+          OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+          # পুরানো ফাইল ক্লিন
+          for old_file in OUTPUT_DIR.glob("*.json"):
+              old_file.unlink()
+          if Path("books/kanzulUmmal.json").exists():
+              Path("books/kanzulUmmal.json").unlink()
+
+          file_list = []
+          inner_chunks = []
+
+          # প্রথমে 100 করে inner chunk বানাও
+          for i in range(0, len(data), INNER_CHUNK):
+              chunk = data[i:i+INNER_CHUNK]
+              start = i + 1
+              end = i + len(chunk)
+
+              combined = []
+              for item in chunk:
+                  t = item.get("title","").strip()
+                  h = item.get("hadith","").strip()
+                  combined.append(f"{h}\n-{t}")
+
+              inner_chunks.append({
+                  "1": f"কানযুল উম্মাল হাদিস {start} থেকে {end}",
+                  "2": "\n\n".join(combined)
+              })
+
+          # এবার 5000 করে ফাইলে ভাগ করো (মানে 50 টা inner chunk = 1 file)
+          chunks_per_file = OUTER_CHUNK // INNER_CHUNK # 50
+
+          for file_idx in range(0, len(inner_chunks), chunks_per_file):
+              file_slice = inner_chunks[file_idx:file_idx+chunks_per_file]
+
+              # এই ফাইলের রেঞ্জ বের করো
+              first_range = file_slice[0]["1"] # কানযুল উম্মাল হাদিস 1 থেকে 100
+              # start end number বের করা
+              overall_start = file_idx * INNER_CHUNK + 1
+              overall_end = overall_start + (len(file_slice) * INNER_CHUNK) -1
+              if overall_end > len(data):
+                  overall_end = len(data)
+
+              filename = f"kanzulUmmal-{overall_start}-{overall_end}.json"
+              filepath = OUTPUT_DIR / filename
+
+              # সাইজ কমানোর জন্য indent=None এবং ensure_ascii=False
+              with open(filepath, 'w', encoding='utf-8') as out:
+                  json.dump(file_slice, out, ensure_ascii=False, separators=(',', ':'))
+
+              file_list.append(filename)
+              size_mb = os.path.getsize(filepath) / (1024*1024)
+              print(f"Created {filename} -> {size_mb:.2f} MB")
+
+          # একটা index.json বানিয়ে দিলাম যাতে app এ লিস্ট করা সহজ হয়
+          with open(OUTPUT_DIR / "index.json", 'w', encoding='utf-8') as idx:
+              json.dump(file_list, idx, ensure_ascii=False, indent=2)
+
+          print("All Done!")
+          PY
+
+      - name: Commit splitted books
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add books/
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "build: split kanzul into 5000 safe chunks"
+            git push
+          fi
