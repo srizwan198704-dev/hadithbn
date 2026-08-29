@@ -2,6 +2,17 @@ name: Scrape Kanzul Ummal
 
 on:
   workflow_dispatch:
+    inputs:
+      book_id:
+        description: 'BOOK ID - hadithbn.com এর ID (যেমন কানযুল উম্মাল এর জন্য যে ID)'
+        required: true
+        default: '10'
+        type: string
+      book_name_bn:
+        description: 'বইয়ের বাংলা নাম (JSON ফাইলের নাম হবে)'
+        required: true
+        default: 'কানযুল উম্মাল'
+        type: string
 
 jobs:
   scrape:
@@ -18,21 +29,23 @@ jobs:
         run: pip install requests beautifulsoup4 lxml
 
       - name: Scrape and Build JSON
+        env:
+          BOOK_ID: ${{ inputs.book_id }}
+          BOOK_NAME_BN: ${{ inputs.book_name_bn }}
         run: |
           cat > scrape.py << 'PYEOF'
           import requests, re, html, os, json, time
           from bs4 import BeautifulSoup
 
-          BOOK_ID = "10"
+          BOOK_ID = os.getenv("BOOK_ID", "10")
+          BOOK_NAME_BN = os.getenv("BOOK_NAME_BN", "কানযুল উম্মাল")
           BASE_URL = f"https://hadithbn.com/h/{BOOK_ID}"
-          BOOK_NAME_BN = "সহীহ ইবনু খুযাইমাহ"
           HEADERS = {"User-Agent": "Mozilla/5.0"}
 
           def to_bn(n):
               return str(n).translate(str.maketrans("0123456789","০১২৩৪৫৬৭৮৯"))
 
           def clean_hadith(raw):
-              # 1. html decode
               t = html.unescape(raw)
               t = re.sub(r'<br\s*/?>', '\n', t, flags=re.I)
               t = re.sub(r'<[^>]+>', '', t)
@@ -43,17 +56,12 @@ jobs:
                   line = line.strip()
                   if not line:
                       continue
-                  # 📖 এবং 🔗 লাইন বাদ
                   if '📖' in line or '🔗' in line or 'hadithbn.com' in line or 'https://' in line:
                       continue
-                  # 📝 ইমোজি বাদ
                   line = line.replace('📝', '').strip()
-                  # &quot; -> " already decoded
                   final_lines.append(line)
               
-              # Join with double line break to keep আরবি ও বাংলা আলাদা
               cleaned = "\n\n".join(final_lines)
-              # একাধিক স্পেস ক্লিন
               cleaned = re.sub(r'[ \t]+', ' ', cleaned)
               cleaned = re.sub(r'\n \n', '\n\n', cleaned)
               return cleaned.strip()
@@ -87,7 +95,6 @@ jobs:
                   if not raw:
                       continue
                   
-                  # নাম্বার বের করা
                   m = re.search(r'#\s*(\d+)', raw)
                   if not m:
                       m = re.search(r'(\d+)\s*-', raw)
@@ -97,7 +104,6 @@ jobs:
 
                   hadith_text = clean_hadith(raw)
 
-                  # তোমার চাওয়া ফাইনাল ২ টা key
                   obj = {
                       "title": f"{BOOK_NAME_BN} {to_bn(num)}",
                       "hadith": hadith_text
@@ -107,20 +113,14 @@ jobs:
               start += step
               time.sleep(0.8)
 
-          # নাম্বার অনুযায়ী sort
           def get_num(x):
-              mm = re.search(r'(\d+)', x['title'])
-              # বাংলা নাম্বার থেকে ইংরেজি
               bn = "০১২৩৪৫৬৭৮৯"
               en = "0123456789"
-              if mm:
-                  # title is already Bangla, convert back for sort
-                  t = x['title']
-                  for b,e in zip(bn,en):
-                      t = t.replace(b,e)
-                  m2 = re.search(r'(\d+)', t)
-                  return int(m2.group(1)) if m2 else 0
-              return 0
+              t = x['title']
+              for b,e in zip(bn,en):
+                  t = t.replace(b,e)
+              m2 = re.search(r'(\d+)', t)
+              return int(m2.group(1)) if m2 else 0
 
           all_data = sorted(all_data, key=get_num)
 
@@ -138,5 +138,5 @@ jobs:
           git config --global user.name "bot"
           git config --global user.email "bot@github.com"
           git add data/
-          git diff --staged --quiet || git commit -m "update: কানযুল উম্মাল json"
+          git diff --staged --quiet || git commit -m "update: ${{ inputs.book_name_bn }} json - ${{ inputs.book_id }}"
           git push
